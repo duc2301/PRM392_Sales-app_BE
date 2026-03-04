@@ -1,30 +1,63 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using PRM392_ProductSale_Project.ApiResponseDTO;
+using Services.DTOs.RequestDTOs;
 using Services.Interfaces;
 
 namespace PRM392_ProductSale_Project.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class AuthController : Controller
+    public class AuthController : ControllerBase
     {
-        private readonly IUserService _userService;
+        private readonly IAuthService _authService;
 
-        public AuthController(IUserService userService)
+        public AuthController(IAuthService authService)
         {
-            _userService = userService;
+            _authService = authService;
         }
 
-        [HttpPost("login")]
-        public async Task<IActionResult> Login(string username, string password)
+        /// <summary>
+        /// User Registration - Create new account
+        /// </summary>
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterRequestDTO request)
         {
-            var user = await _userService.Login(username, password);
-            if (user == null)
+            try
             {
-                return Unauthorized(ApiResponse.Fail("Login fail"));
+                if (!ModelState.IsValid)
+                    return BadRequest(ApiResponse.Fail("Invalid data", ModelState));
+
+                var result = await _authService.RegisterAsync(request);
+                return Created(nameof(Register), 
+                    ApiResponse.Success("Registration successful", result));
             }
-            
-            return Ok(ApiResponse.Success("Login Success"));
+            catch (Exception ex)
+            {
+                return BadRequest(ApiResponse.Fail("Registration failed", ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// User Login - Authenticate user
+        /// </summary>
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginRequestDTO request)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                    return BadRequest(ApiResponse.Fail("Invalid data", ModelState));
+
+                var result = await _authService.LoginAsync(request);
+                if (result == null)
+                    return Unauthorized(ApiResponse.Fail("Invalid username or password"));
+
+                return Ok(ApiResponse.Success("Login successful", result));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ApiResponse.Fail("Login failed", ex.Message));
+            }
         }
     }
 }

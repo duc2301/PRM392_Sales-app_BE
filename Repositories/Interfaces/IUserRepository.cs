@@ -10,5 +10,8 @@ namespace Repositories.Interfaces
     public interface IUserRepository : IGenericRepository<User>
     {
         Task<User?> Login(string username, string password);
+        Task<User?> GetByUsernameAsync(string username);
+        Task<User?> GetByEmailAsync(string email);
+        Task<User?> GetByIdAsync(int id);
     }
 }

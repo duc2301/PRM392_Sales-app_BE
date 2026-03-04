@@ -99,21 +99,33 @@ public partial class SalesAppDbContext : DbContext
 
         modelBuilder.Entity<ChatMessage>(entity =>
         {
-            entity.HasKey(e => e.ChatMessageId).HasName("chat_messages_pkey");
+            entity.HasKey(e => e.MessageId).HasName("chat_messages_pkey");
 
             entity.ToTable("chat_messages");
 
-            entity.Property(e => e.ChatMessageId).HasColumnName("chat_message_id");
-            entity.Property(e => e.Message).HasColumnName("message");
+            entity.Property(e => e.MessageId).HasColumnName("message_id");
+            entity.Property(e => e.SenderId).HasColumnName("sender_id");
+            entity.Property(e => e.ReceiverId).HasColumnName("receiver_id");
+            entity.Property(e => e.MessageText).HasColumnName("message_text");
+            entity.Property(e => e.MessageType)
+                .HasMaxLength(20)
+                .HasDefaultValue("text")
+                .HasColumnName("message_type");
             entity.Property(e => e.SentAt)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnType("timestamp without time zone")
                 .HasColumnName("sent_at");
-            entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.IsRead)
+                .HasDefaultValue(false)
+                .HasColumnName("is_read");
 
-            entity.HasOne(d => d.User).WithMany(p => p.ChatMessages)
-                .HasForeignKey(d => d.UserId)
-                .HasConstraintName("chat_messages_user_id_fkey");
+            entity.HasOne(d => d.Sender).WithMany()
+                .HasForeignKey(d => d.SenderId)
+                .HasConstraintName("chat_messages_sender_id_fkey");
+
+            entity.HasOne(d => d.Receiver).WithMany()
+                .HasForeignKey(d => d.ReceiverId)
+                .HasConstraintName("chat_messages_receiver_id_fkey");
         });
 
         modelBuilder.Entity<Notification>(entity =>
