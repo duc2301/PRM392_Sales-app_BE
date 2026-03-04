@@ -26,8 +26,4 @@
     <ProjectReference Include="..\Repositories\Repositories.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="DTOs\RequestDTOs\" />
-  </ItemGroup>
-
 </Project>
