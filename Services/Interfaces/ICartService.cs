@@ -10,7 +10,7 @@ namespace Services.Interfaces
         Task<CartResponseDTO> AddToCartAsync(int userId, CartItemRequestDTO request);
         Task<bool> UpdateCartItemAsync(int cartItemId, int quantity);
         Task<bool> RemoveCartItemAsync(int cartItemId);
-        Task<bool> ClearCartAsync(int userId);
+        Task<CartResponseDTO?> ClearCartAsync(int userId);
         Task<CartBadgeResponseDTO> GetCartBadgeAsync(int userId);
     }
 }

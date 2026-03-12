@@ -32,7 +32,8 @@ namespace PRM392_ProductSale_Project.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest(ApiResponse.Fail("Create order failed", ex.Message));
+                var errorMessage = ex.InnerException?.Message ?? ex.Message;
+                return BadRequest(ApiResponse.Fail("Create order failed", errorMessage));
             }
         }
 
@@ -82,10 +83,10 @@ namespace PRM392_ProductSale_Project.Controllers
             try
             {
                 var result = await _orderService.CancelOrderAsync(orderId);
-                if (!result)
+                if (result == null)
                     return NotFound(ApiResponse.Fail("Order not found"));
 
-                return Ok(ApiResponse.Success("Order cancelled successfully"));
+                return Ok(ApiResponse.Success("Order cancelled successfully", result));
             }
             catch (Exception ex)
             {
@@ -102,10 +103,10 @@ namespace PRM392_ProductSale_Project.Controllers
             try
             {
                 var result = await _orderService.UpdateOrderStatusAsync(orderId, status);
-                if (!result)
+                if (result == null)
                     return NotFound(ApiResponse.Fail("Order not found"));
 
-                return Ok(ApiResponse.Success("Order status updated"));
+                return Ok(ApiResponse.Success("Order status updated", result));
             }
             catch (Exception ex)
             {
@@ -114,3 +115,4 @@ namespace PRM392_ProductSale_Project.Controllers
         }
     }
 }
+

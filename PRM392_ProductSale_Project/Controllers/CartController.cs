@@ -124,10 +124,10 @@ namespace PRM392_ProductSale_Project.Controllers
             try
             {
                 var result = await _cartService.ClearCartAsync(userId);
-                if (!result)
+                if (result == null)
                     return NotFound(ApiResponse.Fail("Cart not found"));
 
-                return Ok(ApiResponse.Success("Clear cart success"));
+                return Ok(ApiResponse.Success("Clear cart success", result));
             }
             catch (Exception ex)
             {

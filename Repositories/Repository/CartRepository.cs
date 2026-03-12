@@ -20,7 +20,9 @@ namespace Repositories.Repository
             return await _context.Carts
                 .Include(c => c.CartItems)
                     .ThenInclude(ci => ci.Product)
-                .FirstOrDefaultAsync(c => c.UserId == userId);
+                .Where(c => c.UserId == userId)
+                .OrderByDescending(c => c.CartId)
+                .FirstOrDefaultAsync();
         }
 
         public async Task<Cart?> GetByIdAsync(int id)
@@ -29,6 +31,20 @@ namespace Repositories.Repository
                 .Include(c => c.CartItems)
                     .ThenInclude(ci => ci.Product)
                 .FirstOrDefaultAsync(c => c.CartId == id);
+        }
+
+        /// <summary>
+        /// Get cart without entity tracking (for read-only operations after modifications)
+        /// </summary>
+        public async Task<Cart?> GetCartByUserIdAsNoTrackingAsync(int userId)
+        {
+            return await _context.Carts
+                .AsNoTracking()
+                .Include(c => c.CartItems)
+                    .ThenInclude(ci => ci.Product)
+                .Where(c => c.UserId == userId)
+                .OrderByDescending(c => c.CartId)
+                .FirstOrDefaultAsync();
         }
     }
 }

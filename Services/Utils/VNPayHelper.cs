@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -5,132 +7,99 @@ namespace Services.Utils
 {
     public class VNPayHelper
     {
-        /// <summary>
-        /// Get MD5 Hash for VNPay signature
-        /// </summary>
-        public static string GetMD5Hash(string input)
+        private SortedList<string, string> _requestData = new SortedList<string, string>(new VnPayCompare());
+        private SortedList<string, string> _responseData = new SortedList<string, string>(new VnPayCompare());
+
+        public void AddRequestData(string key, string value)
         {
-            using (var md5 = MD5.Create())
+            if (!string.IsNullOrEmpty(value))
             {
-                var hashBytes = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
-                var sb = new StringBuilder();
-                foreach (var b in hashBytes)
-                {
-                    sb.Append(b.ToString("x2"));
-                }
-                return sb.ToString();
+                _requestData.Add(key, value);
             }
         }
 
-        /// <summary>
-        /// Sort dictionary by key
-        /// </summary>
-        public static string BuildQueryString(SortedDictionary<string, string> data)
+        public void AddResponseData(string key, string value)
         {
-            var queryString = new StringBuilder();
-            var count = 0;
-            foreach (var kv in data)
+            if (!string.IsNullOrEmpty(value))
+            {
+                _responseData.Add(key, value);
+            }
+        }
+
+        private string GetUrlEncode(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            return WebUtility.UrlEncode(value).Replace("+", "%20");
+        }
+
+        public string CreateRequestUrl(string baseUrl, string vnp_HashSecret)
+        {
+            StringBuilder data = new StringBuilder();
+            foreach (KeyValuePair<string, string> kv in _requestData)
             {
                 if (!string.IsNullOrEmpty(kv.Value))
                 {
-                    if (count > 0) queryString.Append("&");
-                    queryString.Append(kv.Key).Append("=").Append(kv.Value);
-                    count++;
+                    data.Append(GetUrlEncode(kv.Key) + "=" + GetUrlEncode(kv.Value) + "&");
                 }
             }
-            return queryString.ToString();
+            string queryString = data.ToString();
+
+            if (queryString.Length > 0)
+            {
+                queryString = queryString.Remove(data.Length - 1, 1);
+            }
+
+            string signData = queryString;
+            string vnp_SecureHash = HmacSHA512(vnp_HashSecret, signData);
+
+            return baseUrl + "?" + queryString + "&vnp_SecureHash=" + vnp_SecureHash;
         }
 
-        /// <summary>
-        /// Create request data for VNPay payment
-        /// </summary>
-        public static SortedDictionary<string, string> CreatePaymentRequest(
-            string tmn_code,
-            string hash_secret,
-            string returnUrl,
-            int orderid,
-            long amount,
-            string orderDescription,
-            string clientIp)
+        public bool ValidateSignature(string inputHash, string secretKey)
         {
-            var data = new SortedDictionary<string, string>
+            StringBuilder data = new StringBuilder();
+            foreach (KeyValuePair<string, string> kv in _responseData)
             {
-                { "vnp_Version", "2.1.0" },
-                { "vnp_Command", "pay" },
-                { "vnp_TmnCode", tmn_code },
-                { "vnp_Amount", (amount * 100).ToString() }, // Amount in smallest unit
-                { "vnp_CurrCode", "VND" },
-                { "vnp_TxnRef", orderid.ToString() },
-                { "vnp_OrderInfo", Uri.EscapeUriString(orderDescription) },
-                { "vnp_Locale", "vn" },
-                { "vnp_IpAddr", clientIp },
-                { "vnp_ReturnUrl", returnUrl },
-                { "vnp_CreateDate", DateTime.Now.ToString("yyyyMMddHHmmss") }
-            };
-
-            // Create secure hash
-            var queryString = BuildQueryString(data);
-            var secureHash = GetMD5Hash(hash_secret + queryString);
-            data.Add("vnp_SecureHash", secureHash);
-
-            return data;
-        }
-
-        /// <summary>
-        /// Verify VNPay response
-        /// </summary>
-        public static bool ValidateSignature(Dictionary<string, string> responseData, string hashSecret)
-        {
-            try
-            {
-                // Get secure hash from response
-                var secureHash = responseData.ContainsKey("vnp_SecureHash") 
-                    ? responseData["vnp_SecureHash"] 
-                    : "";
-
-                // Remove hash from data before validating
-                var data = new SortedDictionary<string, string>();
-                foreach (var kv in responseData.Where(x => x.Key != "vnp_SecureHash"))
+                if (!string.IsNullOrEmpty(kv.Value))
                 {
-                    data.Add(kv.Key, kv.Value);
+                    data.Append(GetUrlEncode(kv.Key) + "=" + GetUrlEncode(kv.Value) + "&");
                 }
-
-                // Recreate hash
-                var queryString = BuildQueryString(data);
-                var newHash = GetMD5Hash(hashSecret + queryString);
-
-                return secureHash.Equals(newHash, StringComparison.OrdinalIgnoreCase);
             }
-            catch
+            string rspRaw = data.ToString();
+            if (rspRaw.Length > 0)
             {
-                return false;
+                rspRaw = rspRaw.Remove(rspRaw.Length - 1, 1);
             }
+            string myChecksum = HmacSHA512(secretKey, rspRaw);
+            return myChecksum.Equals(inputHash, StringComparison.InvariantCultureIgnoreCase);
         }
 
-        /// <summary>
-        /// Get response code description
-        /// </summary>
-        public static string GetResponseCodeDescription(string code)
+        private static string HmacSHA512(string key, string inputData)
         {
-            return code switch
+            var hash = new StringBuilder();
+            byte[] keyBytes = Encoding.UTF8.GetBytes(key);
+            byte[] inputBytes = Encoding.UTF8.GetBytes(inputData);
+            using (var hmac = new HMACSHA512(keyBytes))
             {
-                "00" => "Giao dịch thành công",
-                "01" => "Giao dịch bị từ chối",
-                "02" => "Merchant đóng kết nối",
-                "04" => "Server không phản hồi",
-                "05" => "Giao dịch không thành công",
-                "07" => "Trị số không hợp lệ",
-                "08" => "Sai checksum",
-                "09" => "IP/Tmncode không được phép truy cập",
-                "10" => "Không có dữ liệu gửi lên",
-                "11" => "Địa chỉ IP không đăng ký",
-                "12" => "Sai mật khẩu",
-                "13" => "Sai access code",
-                "14" => "Sai merchant id",
-                "20" => "Hết hạn khoá bảo mật",
-                "99" => "Lỗi không xác định",
-                _ => "Lỗi không xác định"
-            };
+                byte[] hashValue = hmac.ComputeHash(inputBytes);
+                foreach (var theByte in hashValue)
+                {
+                    hash.Append(theByte.ToString("x2"));
+                }
+            }
+            return hash.ToString();
+        }
+    }
+
+    public class VnPayCompare : IComparer<string>
+    {
+        public int Compare(string x, string y)
+        {
+            if (x == y) return 0;
+            if (x == null) return -1;
+            if (y == null) return 1;
+            var vnpCompare = CompareInfo.GetCompareInfo("en-US");
+            return vnpCompare.Compare(x, y, CompareOptions.Ordinal);
         }
     }
 }
