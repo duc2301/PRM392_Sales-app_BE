@@ -28,16 +28,22 @@ namespace Services.Services
 
         public async Task<PaymentResponseDTO> CreatePaymentAsync(PaymentRequestDTO request)
         {
-            // Validate order exists
             var order = await _unitOfWork.OrderRepository.GetByIdAsync(request.OrderId);
             if (order == null)
                 throw new Exception("Order not found");
+
+            if (order.OrderStatus != "pending")
+                throw new Exception($"Cannot create payment for {order.OrderStatus} order. Only pending orders can be paid");
+
+            var existingPayment = (await _unitOfWork.PaymentRepository.GetByOrderIdAsync(request.OrderId)).FirstOrDefault();
+            if (existingPayment != null && existingPayment.PaymentStatus == "success")
+                throw new Exception("Payment for this order already confirmed");
 
             var payment = new Payment
             {
                 OrderId = request.OrderId,
                 Amount = request.Amount,
-                PaymentDate = DateTime.UtcNow,
+                PaymentDate = null,
                 PaymentStatus = "pending"
             };
 
@@ -66,12 +72,11 @@ namespace Services.Services
 
             payment.PaymentStatus = status;
             if (status == "success")
-                payment.PaymentDate = DateTime.UtcNow;
+                payment.PaymentDate = DateTime.Now;
 
             _unitOfWork.PaymentRepository.Update(payment);
             await _unitOfWork.SaveChanges();
 
-            // Update order status if payment successful
             if (status == "success" && payment.OrderId.HasValue)
             {
                 await UpdateOrderStatusAsync(payment.OrderId.Value, "confirmed");
@@ -86,28 +91,53 @@ namespace Services.Services
             if (order == null)
                 throw new Exception("Order not found");
 
+            if (order.OrderStatus != "pending")
+                throw new Exception($"Order status is {order.OrderStatus}, payment already processed");
+
             var cartTotal = order.Cart?.TotalPrice ?? 0;
-            if (amount != cartTotal)
-                throw new Exception("Payment amount mismatch");
+            var tolerance = cartTotal * 0.01m;
+            if (Math.Abs(amount - cartTotal) > tolerance)
+                throw new Exception($"Payment amount mismatch: expected {cartTotal}, got {amount}");
 
-            // Create payment record
-            var payment = new Payment
+            var payments = await _unitOfWork.PaymentRepository.GetByOrderIdAsync(orderId);
+            var payment = payments.FirstOrDefault();
+
+            if (payment == null)
             {
-                OrderId = orderId,
-                Amount = amount,
-                PaymentDate = DateTime.UtcNow,
-                PaymentStatus = "success"
-            };
-
-            await _unitOfWork.PaymentRepository.CreateAsync(payment);
-
-            // Update order status
-            order.OrderStatus = "confirmed";
-            _unitOfWork.OrderRepository.Update(order);
+                payment = new Payment
+                {
+                    OrderId = orderId,
+                    Amount = amount,
+                    PaymentDate = DateTime.Now,
+                    PaymentStatus = "success"
+                };
+                await _unitOfWork.PaymentRepository.CreateAsync(payment);
+            }
+            else if (payment.PaymentStatus == "success")
+            {
+                await _unitOfWork.SaveChanges();
+                var existingPayment = await _unitOfWork.PaymentRepository.GetByIdAsync(payment.PaymentId);
+                return existingPayment != null ? MapPaymentToDTO(existingPayment) : null;
+            }
+            else
+            {
+                payment.Amount = amount;
+                payment.PaymentDate = DateTime.Now;
+                payment.PaymentStatus = "success";
+                _unitOfWork.PaymentRepository.Update(payment);
+            }
 
             await _unitOfWork.SaveChanges();
 
-            return MapPaymentToDTO(payment);
+            var confirmedPayment = await _unitOfWork.PaymentRepository.GetByIdAsync(payment.PaymentId);
+            if (confirmedPayment == null)
+                return null;
+
+            order.OrderStatus = "confirmed";
+            _unitOfWork.OrderRepository.Update(order);
+            await _unitOfWork.SaveChanges();
+
+            return MapPaymentToDTO(confirmedPayment);
         }
 
         private PaymentResponseDTO MapPaymentToDTO(Payment payment)

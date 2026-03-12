@@ -12,8 +12,8 @@ namespace Services.Services
         Task<OrderResponseDTO> CreateOrderAsync(OrderRequestDTO request);
         Task<OrderResponseDTO?> GetOrderByIdAsync(int orderId);
         Task<IEnumerable<OrderResponseDTO>> GetUserOrdersAsync(int userId);
-        Task<bool> UpdateOrderStatusAsync(int orderId, string status);
-        Task<bool> CancelOrderAsync(int orderId);
+        Task<OrderResponseDTO?> UpdateOrderStatusAsync(int orderId, string status);
+        Task<OrderResponseDTO?> CancelOrderAsync(int orderId);
     }
 
     public class OrderService : IOrderService
@@ -29,12 +29,17 @@ namespace Services.Services
 
         public async Task<OrderResponseDTO> CreateOrderAsync(OrderRequestDTO request)
         {
-            // Get user cart
-            var cart = await _unitOfWork.CartRepository.GetCartByUserIdAsync(request.UserId);
-            if (cart == null || !cart.CartItems.Any())
-                throw new Exception("Cart is empty");
+            var user = await _unitOfWork.UserRepository.GetByIdAsync(request.UserId);
+            if (user == null)
+                throw new Exception($"User with ID {request.UserId} not found");
 
-            // Create order
+            var cart = await _unitOfWork.CartRepository.GetCartByUserIdAsync(request.UserId);
+            if (cart == null)
+                throw new Exception($"No cart found for user {request.UserId}. Please add items to cart first");
+
+            if (!cart.CartItems.Any())
+                throw new Exception("Cart is empty. Please add items before creating an order");
+
             var order = new Order
             {
                 CartId = cart.CartId,
@@ -42,13 +47,52 @@ namespace Services.Services
                 PaymentMethod = request.PaymentMethod,
                 BillingAddress = request.BillingAddress,
                 OrderStatus = "pending",
-                OrderDate = DateTime.UtcNow
+                OrderDate = DateTime.Now
             };
 
-            await _unitOfWork.OrderRepository.CreateAsync(order);
-            await _unitOfWork.SaveChanges();
+            try
+            {
+                await _unitOfWork.OrderRepository.CreateAsync(order);
+                await _unitOfWork.SaveChanges();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to create order: {ex.InnerException?.Message ?? ex.Message}");
+            }
 
-            return await MapOrderToDTO(order);
+            var createdOrder = await _unitOfWork.OrderRepository.GetByIdAsync(order.OrderId);
+            if (createdOrder == null)
+                throw new Exception("Failed to create order - could not retrieve created order from database");
+
+            cart.Status = "ordered";
+            _unitOfWork.CartRepository.Update(cart);
+            try
+            {
+                await _unitOfWork.SaveChanges();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Warning: Failed to update cart status: {ex.Message}");
+            }
+
+            var newCart = new Cart
+            {
+                UserId = request.UserId,
+                Status = "active",
+                TotalPrice = 0,
+                CartItems = new List<CartItem>()
+            };
+            try
+            {
+                await _unitOfWork.CartRepository.CreateAsync(newCart);
+                await _unitOfWork.SaveChanges();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Warning: Failed to create new cart for user: {ex.Message}");
+            }
+
+            return await MapOrderToDTO(createdOrder);
         }
 
         public async Task<OrderResponseDTO?> GetOrderByIdAsync(int orderId)
@@ -73,29 +117,51 @@ namespace Services.Services
             return result;
         }
 
-        public async Task<bool> UpdateOrderStatusAsync(int orderId, string status)
+        public async Task<OrderResponseDTO?> UpdateOrderStatusAsync(int orderId, string status)
         {
             var order = await _unitOfWork.OrderRepository.GetByIdAsync(orderId);
-            if (order == null) return false;
+            if (order == null) return null;
 
             order.OrderStatus = status;
             _unitOfWork.OrderRepository.Update(order);
             await _unitOfWork.SaveChanges();
-            return true;
+
+            var updatedOrder = await _unitOfWork.OrderRepository.GetByIdAsync(orderId);
+            return updatedOrder != null ? await MapOrderToDTO(updatedOrder) : null;
         }
 
-        public async Task<bool> CancelOrderAsync(int orderId)
+        public async Task<OrderResponseDTO?> CancelOrderAsync(int orderId)
         {
             var order = await _unitOfWork.OrderRepository.GetByIdAsync(orderId);
-            if (order == null) return false;
+            if (order == null) return null;
 
-            if (order.OrderStatus == "confirmed" || order.OrderStatus == "shipped")
-                throw new Exception("Cannot cancel confirmed/shipped order");
+            if (order.OrderStatus != "pending")
+                throw new Exception($"Cannot cancel {order.OrderStatus} order. Only pending orders can be cancelled");
 
             order.OrderStatus = "cancelled";
             _unitOfWork.OrderRepository.Update(order);
             await _unitOfWork.SaveChanges();
-            return true;
+
+            if (order.CartId.HasValue)
+            {
+                var cart = await _unitOfWork.CartRepository.GetByIdAsync(order.CartId.Value);
+                if (cart != null && cart.Status == "ordered")
+                {
+                    cart.Status = "active";
+                    _unitOfWork.CartRepository.Update(cart);
+                    try
+                    {
+                        await _unitOfWork.SaveChanges();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Failed to restore cart status: {ex.Message}");
+                    }
+                }
+            }
+
+            var cancelledOrder = await _unitOfWork.OrderRepository.GetByIdAsync(orderId);
+            return cancelledOrder != null ? await MapOrderToDTO(cancelledOrder) : null;
         }
 
         private async Task<OrderResponseDTO> MapOrderToDTO(Order order)
@@ -119,7 +185,7 @@ namespace Services.Services
                     PaymentId = payment.PaymentId,
                     OrderId = payment.OrderId ?? 0,
                     Amount = payment.Amount,
-                    PaymentDate = payment.PaymentDate ?? DateTime.UtcNow,
+                    PaymentDate = payment.PaymentDate ?? DateTime.Now,
                     PaymentStatus = payment.PaymentStatus,
                     TransactionId = payment.PaymentId.ToString()
                 };
@@ -133,9 +199,9 @@ namespace Services.Services
                 OrderStatus = order.OrderStatus,
                 PaymentMethod = order.PaymentMethod,
                 BillingAddress = order.BillingAddress,
-                ShippingAddress = order.BillingAddress, // Same as billing for now
+                ShippingAddress = order.BillingAddress,
                 PhoneNumber = order.User?.PhoneNumber ?? "",
-                OrderDate = order.OrderDate ?? DateTime.UtcNow,
+                OrderDate = order.OrderDate ?? DateTime.Now,
                 OrderItems = orderItems,
                 Payment = paymentDTO
             };

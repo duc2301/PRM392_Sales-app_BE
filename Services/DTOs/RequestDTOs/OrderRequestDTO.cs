@@ -5,7 +5,6 @@ namespace Services.DTOs.RequestDTOs
         public int UserId { get; set; }
         public string PaymentMethod { get; set; } = null!; // vnpay, zalopay, paypal
         public string BillingAddress { get; set; } = null!;
-        public string ShippingAddress { get; set; } = null!;
         public string PhoneNumber { get; set; } = null!;
         public decimal TotalAmount { get; set; }
     }

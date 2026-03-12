@@ -6,5 +6,6 @@ namespace Repositories.Interfaces
     {
         Task<Cart?> GetCartByUserIdAsync(int userId);
         Task<Cart?> GetByIdAsync(int id);
+        Task<Cart?> GetCartByUserIdAsNoTrackingAsync(int userId);
     }
 }
