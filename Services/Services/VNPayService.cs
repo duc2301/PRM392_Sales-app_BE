@@ -51,7 +51,8 @@ namespace Services.Services
             vnpay.AddRequestData("vnp_ReturnUrl", returnUrl);
             vnpay.AddRequestData("vnp_TxnRef", orderId.ToString());
 
-            return vnpay.CreateRequestUrl(VNPayConfig.VnPayUrl, hashSecret);
+            var baseUrl = _configuration["VNPay:BaseUrl"];
+            return vnpay.CreateRequestUrl(baseUrl, hashSecret);
         }
 
         public PaymentResponseDTO ProcessPaymentReturn(Dictionary<string, string> responseData)

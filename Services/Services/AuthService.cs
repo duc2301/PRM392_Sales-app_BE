@@ -40,7 +40,7 @@ namespace Services.Services
                 Email = request.Email,
                 PhoneNumber = request.PhoneNumber,
                 Address = request.Address,
-                Role = "user",
+                Role = "CUSTOMER",
                 PasswordHash = PasswordHasher.HashPassword(request.Password)
             };
 

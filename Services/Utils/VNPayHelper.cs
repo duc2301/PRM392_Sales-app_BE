@@ -26,7 +26,12 @@ namespace Services.Utils
             }
         }
 
-        // TẠO URL GỬI ĐI
+        private string GetUrlEncode(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            return WebUtility.UrlEncode(value).Replace("+", "%20");
+        }
+
         public string CreateRequestUrl(string baseUrl, string vnp_HashSecret)
         {
             StringBuilder data = new StringBuilder();
@@ -34,7 +39,7 @@ namespace Services.Utils
             {
                 if (!string.IsNullOrEmpty(kv.Value))
                 {
-                    data.Append(WebUtility.UrlEncode(kv.Key) + "=" + WebUtility.UrlEncode(kv.Value) + "&");
+                    data.Append(GetUrlEncode(kv.Key) + "=" + GetUrlEncode(kv.Value) + "&");
                 }
             }
             string queryString = data.ToString();
@@ -50,7 +55,6 @@ namespace Services.Utils
             return baseUrl + "?" + queryString + "&vnp_SecureHash=" + vnp_SecureHash;
         }
 
-        // KIỂM TRA CHỮ KÝ TRẢ VỀ
         public bool ValidateSignature(string inputHash, string secretKey)
         {
             StringBuilder data = new StringBuilder();
@@ -58,7 +62,7 @@ namespace Services.Utils
             {
                 if (!string.IsNullOrEmpty(kv.Value))
                 {
-                    data.Append(WebUtility.UrlEncode(kv.Key) + "=" + WebUtility.UrlEncode(kv.Value) + "&");
+                    data.Append(GetUrlEncode(kv.Key) + "=" + GetUrlEncode(kv.Value) + "&");
                 }
             }
             string rspRaw = data.ToString();
@@ -70,7 +74,6 @@ namespace Services.Utils
             return myChecksum.Equals(inputHash, StringComparison.InvariantCultureIgnoreCase);
         }
 
-        // THUẬT TOÁN BĂM
         private static string HmacSHA512(string key, string inputData)
         {
             var hash = new StringBuilder();
@@ -88,7 +91,6 @@ namespace Services.Utils
         }
     }
 
-    // CLASS SO SÁNH CHUẨN CỦA VNPAY
     public class VnPayCompare : IComparer<string>
     {
         public int Compare(string x, string y)
