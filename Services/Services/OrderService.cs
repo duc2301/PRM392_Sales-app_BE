@@ -33,20 +33,13 @@ namespace Services.Services
             if (user == null)
                 throw new Exception($"User with ID {request.UserId} not found");
 
-            var cart = await _unitOfWork.CartRepository.GetCartByUserIdAsync(request.UserId);
-            if (cart == null)
-                throw new Exception($"No cart found for user {request.UserId}. Please add items to cart first");
-
-            if (!cart.CartItems.Any())
-                throw new Exception("Cart is empty. Please add items before creating an order");
-
             var order = new Order
             {
-                CartId = cart.CartId,
+                CartId = request.CartId,
                 UserId = request.UserId,
-                PaymentMethod = request.PaymentMethod,
-                BillingAddress = request.BillingAddress,
                 OrderStatus = "pending",
+                PaymentMethod = "Online banking",
+                BillingAddress = "",
                 OrderDate = DateTime.Now
             };
 
@@ -62,18 +55,7 @@ namespace Services.Services
 
             var createdOrder = await _unitOfWork.OrderRepository.GetByIdAsync(order.OrderId);
             if (createdOrder == null)
-                throw new Exception("Failed to create order - could not retrieve created order from database");
-
-            cart.Status = "ordered";
-            _unitOfWork.CartRepository.Update(cart);
-            try
-            {
-                await _unitOfWork.SaveChanges();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Warning: Failed to update cart status: {ex.Message}");
-            }
+                throw new Exception("Failed to create order - could not retrieve created order from database");            
 
             var newCart = new Cart
             {
@@ -187,7 +169,6 @@ namespace Services.Services
                     Amount = payment.Amount,
                     PaymentDate = payment.PaymentDate ?? DateTime.Now,
                     PaymentStatus = payment.PaymentStatus,
-                    TransactionId = payment.PaymentId.ToString()
                 };
             }
 

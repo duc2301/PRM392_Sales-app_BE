@@ -80,9 +80,17 @@ namespace Repositories.Basic
         /// </summary>
         public void Update(T entity)
         {
-            _context.ChangeTracker.Clear();
-            var tracker = _context.Attach(entity);
-            tracker.State = EntityState.Modified;
+            // Attach the entity and mark as modified.
+            // Avoid clearing the ChangeTracker here because it may remove pending changes
+            // from other entities in the same unit of work (causing partial updates).
+            var entry = _context.Entry(entity);
+            if (entry.State == EntityState.Detached)
+            {
+                _context.Set<T>().Attach(entity);
+                entry = _context.Entry(entity);
+            }
+
+            entry.State = EntityState.Modified;
         }
     }
 }

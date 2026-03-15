@@ -67,13 +67,3 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-
-
-
-// app.UseHttpsRedirection(); // Tắt khi dev để mobile emulator dùng HTTP
-
-app.UseAuthorization();
-
-app.MapControllers();
-
-app.Run();

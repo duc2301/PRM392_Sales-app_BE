@@ -3,6 +3,7 @@ using Repositories.Interfaces;
 using Repositories.Models;
 using Services.DTOs.RequestDTOs;
 using Services.DTOs.ResponseDTOs;
+using Microsoft.Extensions.Logging;
 
 namespace Services.Services
 {
@@ -12,37 +13,36 @@ namespace Services.Services
         Task<PaymentResponseDTO?> GetPaymentByIdAsync(int paymentId);
         Task<IEnumerable<PaymentResponseDTO>> GetOrderPaymentsAsync(int orderId);
         Task<bool> UpdatePaymentStatusAsync(int paymentId, string status);
-        Task<PaymentResponseDTO?> ConfirmPaymentAsync(int orderId, decimal amount);
+        Task<PaymentResponseDTO?> ConfirmPaymentAsync(int paymentId, string transactionId, string gateway, string paymentMethod);
+        Task<PaymentResponseDTO?> FailPaymentAsync(int paymentId, string responseCode);
     }
 
     public class PaymentService : IPaymentService
     {
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
+        private readonly Microsoft.Extensions.Logging.ILogger<PaymentService> _logger;
 
-        public PaymentService(IUnitOfWork unitOfWork, IMapper mapper)
+        public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, Microsoft.Extensions.Logging.ILogger<PaymentService> logger)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
+            _logger = logger;
         }
 
         public async Task<PaymentResponseDTO> CreatePaymentAsync(PaymentRequestDTO request)
         {
             var order = await _unitOfWork.OrderRepository.GetByIdAsync(request.OrderId);
             if (order == null)
-                throw new Exception("Order not found");
+                throw new Exception("Order not found");            
 
-            if (order.OrderStatus != "pending")
-                throw new Exception($"Cannot create payment for {order.OrderStatus} order. Only pending orders can be paid");
-
-            var existingPayment = (await _unitOfWork.PaymentRepository.GetByOrderIdAsync(request.OrderId)).FirstOrDefault();
-            if (existingPayment != null && existingPayment.PaymentStatus == "success")
-                throw new Exception("Payment for this order already confirmed");
+            if (order.OrderStatus != "pending" && order.OrderStatus != "payment_failed")
+                throw new Exception($"Cannot create payment for {order.OrderStatus} order. Only pending or failed orders can be paid");
 
             var payment = new Payment
             {
                 OrderId = request.OrderId,
-                Amount = request.Amount,
+                Amount = order.Cart.TotalPrice,
                 PaymentDate = null,
                 PaymentStatus = "pending"
             };
@@ -85,59 +85,73 @@ namespace Services.Services
             return true;
         }
 
-        public async Task<PaymentResponseDTO?> ConfirmPaymentAsync(int orderId, decimal amount)
+        public async Task<PaymentResponseDTO?> ConfirmPaymentAsync(int paymentId, string transactionId, string gateway, string paymentMethod)
         {
-            var order = await _unitOfWork.OrderRepository.GetByIdAsync(orderId);
-            if (order == null)
-                throw new Exception("Order not found");
-
-            if (order.OrderStatus != "pending")
-                throw new Exception($"Order status is {order.OrderStatus}, payment already processed");
-
-            var cartTotal = order.Cart?.TotalPrice ?? 0;
-            var tolerance = cartTotal * 0.01m;
-            if (Math.Abs(amount - cartTotal) > tolerance)
-                throw new Exception($"Payment amount mismatch: expected {cartTotal}, got {amount}");
-
-            var payments = await _unitOfWork.PaymentRepository.GetByOrderIdAsync(orderId);
-            var payment = payments.FirstOrDefault();
-
+            var payment = await _unitOfWork.PaymentRepository.GetByIdAsync(paymentId);
             if (payment == null)
+                throw new Exception($"Payment with ID {paymentId} not found");
+
+            if (payment.PaymentStatus == "success")
             {
-                payment = new Payment
-                {
-                    OrderId = orderId,
-                    Amount = amount,
-                    PaymentDate = DateTime.Now,
-                    PaymentStatus = "success"
-                };
-                await _unitOfWork.PaymentRepository.CreateAsync(payment);
-            }
-            else if (payment.PaymentStatus == "success")
-            {
-                await _unitOfWork.SaveChanges();
-                var existingPayment = await _unitOfWork.PaymentRepository.GetByIdAsync(payment.PaymentId);
-                return existingPayment != null ? MapPaymentToDTO(existingPayment) : null;
-            }
-            else
-            {
-                payment.Amount = amount;
-                payment.PaymentDate = DateTime.Now;
-                payment.PaymentStatus = "success";
-                _unitOfWork.PaymentRepository.Update(payment);
+                return MapPaymentToDTO(payment);
             }
 
-            await _unitOfWork.SaveChanges();
+            var order = payment.Order;
+            if (order == null)
+                throw new Exception("Order associated with payment not found");
 
-            var confirmedPayment = await _unitOfWork.PaymentRepository.GetByIdAsync(payment.PaymentId);
-            if (confirmedPayment == null)
-                return null;
+            if (order.OrderStatus != "pending" && order.OrderStatus != "payment_failed")
+            {
+                _logger.LogWarning($"Order {order.OrderId} status is {order.OrderStatus}. Payment {paymentId} confirming anyway but check logic.");
+            }
 
+            // Update Payment
+            payment.PaymentStatus = "success";
+            payment.PaymentDate = DateTime.Now;
+
+            _unitOfWork.PaymentRepository.Update(payment);
+
+            // Update Order 
             order.OrderStatus = "confirmed";
             _unitOfWork.OrderRepository.Update(order);
+
+            // Commit transaction
             await _unitOfWork.SaveChanges();
 
-            return MapPaymentToDTO(confirmedPayment);
+            _logger.LogInformation($"Successfully confirmed payment {paymentId} for order {order.OrderId} with TransactionId {transactionId}");
+
+            return MapPaymentToDTO(payment);
+        }
+
+        public async Task<PaymentResponseDTO?> FailPaymentAsync(int paymentId, string responseCode)
+        {
+            var payment = await _unitOfWork.PaymentRepository.GetByIdAsync(paymentId);
+            if (payment == null)
+                return null;
+
+            if (payment.PaymentStatus == "success")
+            {
+                _logger.LogWarning($"Attempted to fail a success payment {paymentId}");
+                return MapPaymentToDTO(payment);
+            }
+
+            payment.PaymentStatus = "failed";
+            
+            var order = payment.Order;
+            if (order != null && order.OrderStatus == "pending")
+            {
+                order.OrderStatus = "payment_failed";
+                _unitOfWork.OrderRepository.Update(order);
+            }
+
+            _unitOfWork.PaymentRepository.Update(payment);
+            await _unitOfWork.SaveChanges();
+            
+            _logger.LogInformation($"Marked payment {paymentId} as failed with code {responseCode}");
+
+            var dto = MapPaymentToDTO(payment);
+            dto.ResponseCode = responseCode;
+            return dto;
         }
 
         private PaymentResponseDTO MapPaymentToDTO(Payment payment)
@@ -148,8 +162,7 @@ namespace Services.Services
                 OrderId = payment.OrderId ?? 0,
                 Amount = payment.Amount,
                 PaymentDate = payment.PaymentDate ?? DateTime.UtcNow,
-                PaymentStatus = payment.PaymentStatus,
-                TransactionId = payment.PaymentId.ToString()
+                PaymentStatus = payment.PaymentStatus,      
             };
         }
 
