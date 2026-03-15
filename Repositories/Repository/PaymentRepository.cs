@@ -29,10 +29,9 @@ namespace Repositories.Repository
                 .ToListAsync();
         }
 
-        public async Task<Payment?> GetByTransactionIdAsync(string transactionId)
+        public Task<Payment?> GetByTransactionIdAsync(string transactionId)
         {
-            return await _context.Payments
-                .FirstOrDefaultAsync(p => p.PaymentStatus == "success" && p.PaymentId.ToString() == transactionId);
+            throw new NotImplementedException();
         }
     }
 }

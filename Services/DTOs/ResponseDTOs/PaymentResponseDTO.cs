@@ -10,5 +10,6 @@ namespace Services.DTOs.ResponseDTOs
         public string PaymentMethod { get; set; } = null!;
         public string? TransactionId { get; set; }
         public string? ResponseCode { get; set; }
+        public string? Gateway { get; set; }
     }
 }

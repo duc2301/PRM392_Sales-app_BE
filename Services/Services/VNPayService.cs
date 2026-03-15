@@ -1,13 +1,15 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Services.DTOs.ResponseDTOs;
 using Services.Utils;
+using VNPay.NetCore;
 
 namespace Services.Services
 {
     public interface IVNPayService
     {
-        string CreatePaymentUrl(int orderId, decimal amount, string orderDescription, string clientIp, string returnUrl);
-        PaymentResponseDTO ProcessPaymentReturn(Dictionary<string, string> responseData);
+        string CreatePaymentUrl(int paymentId, decimal amount, string orderDescription, string clientIp, string returnUrl);
+        VNPayReturnDTO ProcessPaymentReturn(IQueryCollection query);
     }
 
     public class VNPayService : IVNPayService
@@ -19,75 +21,75 @@ namespace Services.Services
             _configuration = configuration;
         }
 
-        public string CreatePaymentUrl(int orderId, decimal amount, string orderDescription,
-            string clientIp, string returnUrl)
+        public string CreatePaymentUrl(int paymentId, decimal amount, string orderDescription,
+    string clientIp, string returnUrl)
         {
-            var tmnCode = _configuration["VNPay:TmnCode"]?.Trim();
-            var hashSecret = _configuration["VNPay:HashSecret"]?.Trim();
+            var vnp_TmnCode = _configuration["VNPay:TmnCode"]?.Trim();
+            var vnp_HashSecret = _configuration["VNPay:HashSecret"]?.Trim();
+            var vnp_BaseUrl = _configuration["VNPay:BaseUrl"]?.Trim().TrimEnd('/');
 
-            if (string.IsNullOrEmpty(tmnCode) || string.IsNullOrEmpty(hashSecret))
+            if (string.IsNullOrEmpty(vnp_TmnCode) || string.IsNullOrEmpty(vnp_HashSecret))
                 throw new Exception("VNPay configuration is missing");
 
             if (clientIp == "::1" || string.IsNullOrEmpty(clientIp))
                 clientIp = "127.0.0.1";
 
-            var sanitizedDescription = System.Text.RegularExpressions.Regex.Replace(orderDescription, @"[^\w\s\-\.@]", "");
-
             TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
             DateTime vnTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
 
-            var vnpay = new VNPayHelper();
+            var vnpay = new VnPayLibrary();
 
             vnpay.AddRequestData("vnp_Version", "2.1.0");
             vnpay.AddRequestData("vnp_Command", "pay");
-            vnpay.AddRequestData("vnp_TmnCode", tmnCode);
+            vnpay.AddRequestData("vnp_TmnCode", vnp_TmnCode);
             vnpay.AddRequestData("vnp_Amount", ((long)(amount * 100)).ToString());
             vnpay.AddRequestData("vnp_CreateDate", vnTime.ToString("yyyyMMddHHmmss"));
             vnpay.AddRequestData("vnp_CurrCode", "VND");
             vnpay.AddRequestData("vnp_IpAddr", clientIp);
             vnpay.AddRequestData("vnp_Locale", "vn");
-            vnpay.AddRequestData("vnp_OrderInfo", sanitizedDescription);
+            vnpay.AddRequestData("vnp_OrderInfo", orderDescription);
             vnpay.AddRequestData("vnp_OrderType", "other");
             vnpay.AddRequestData("vnp_ReturnUrl", returnUrl);
-            vnpay.AddRequestData("vnp_TxnRef", orderId.ToString());
+            vnpay.AddRequestData("vnp_TxnRef", paymentId.ToString());
 
-            var baseUrl = _configuration["VNPay:BaseUrl"];
-            return vnpay.CreateRequestUrl(baseUrl, hashSecret);
+            // thêm expire để chuẩn VNPay
+            vnpay.AddRequestData("vnp_ExpireDate", vnTime.AddMinutes(15).ToString("yyyyMMddHHmmss"));
+
+            return vnpay.CreateRequestUrl(vnp_BaseUrl, vnp_HashSecret);
         }
 
-        public PaymentResponseDTO ProcessPaymentReturn(Dictionary<string, string> responseData)
+        public VNPayReturnDTO ProcessPaymentReturn(IQueryCollection query)
         {
             var hashSecret = _configuration["VNPay:HashSecret"]?.Trim();
-            var vnpay = new VNPayHelper();
+            var vnpay = new VnPayLibrary();
 
-            foreach (var kv in responseData)
+            foreach (var key in query.Keys)
             {
-                if (!string.IsNullOrEmpty(kv.Key) && kv.Key.StartsWith("vnp_"))
+                if (key.StartsWith("vnp_") && key != "vnp_SecureHash" && key != "vnp_SecureHashType")
                 {
-                    if (kv.Key != "vnp_SecureHash" && kv.Key != "vnp_SecureHashType")
-                    {
-                        vnpay.AddResponseData(kv.Key, kv.Value);
-                    }
+                    vnpay.AddResponseData(key, query[key]);
                 }
             }
 
-            var vnp_SecureHash = responseData.ContainsKey("vnp_SecureHash") ? responseData["vnp_SecureHash"] : "";
+            var secureHash = query["vnp_SecureHash"];
 
-            if (!vnpay.ValidateSignature(vnp_SecureHash, hashSecret))
+            if (!vnpay.ValidateSignature(secureHash, hashSecret))
                 throw new Exception("Invalid signature");
 
-            var responseCode = responseData.ContainsKey("vnp_ResponseCode") ? responseData["vnp_ResponseCode"] : "";
-            var transactionStatus = responseData.ContainsKey("vnp_TransactionStatus") ? responseData["vnp_TransactionStatus"] : "";
-            var orderId = int.Parse(responseData.ContainsKey("vnp_TxnRef") ? responseData["vnp_TxnRef"] : "0");
+            var responseCode = query["vnp_ResponseCode"];
+            var transactionStatus = query["vnp_TransactionStatus"];
+            var paymentId = int.Parse(query["vnp_TxnRef"]);
 
-            var paymentStatus = (responseCode == "00" && transactionStatus == "00") ? "success" : "failed";
+            var paymentStatus = (responseCode == "00" && transactionStatus == "00")
+                ? "success"
+                : "failed";
 
-            return new PaymentResponseDTO
+            return new VNPayReturnDTO
             {
-                OrderId = orderId,
+                OrderId = paymentId,
                 PaymentStatus = paymentStatus,
                 ResponseCode = responseCode,
-                TransactionId = responseData.ContainsKey("vnp_TransactionNo") ? responseData["vnp_TransactionNo"] : ""
+                TransactionId = query["vnp_TransactionNo"]
             };
         }
     }
